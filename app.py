@@ -1,20 +1,30 @@
+
 # Real-Time Healthcare Monitoring Dashboard
 # Standalone Streamlit version for Community Cloud
 
 import random
 from datetime import datetime
+
 import pandas as pd
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 
-# Page configuration
+
+# --------------------------------------------------
+# 1. PAGE CONFIGURATION
+# --------------------------------------------------
+
 st.set_page_config(
     page_title="Healthcare Monitoring System",
     page_icon="🏥",
     layout="wide"
 )
 
-# Patient information and normal baseline readings
+
+# --------------------------------------------------
+# 2. PATIENT INFORMATION
+# --------------------------------------------------
+
 PATIENTS = {
     "P101": (75, 36.8),
     "P102": (85, 37.0),
@@ -28,22 +38,31 @@ PATIENTS = {
     "P110": (76, 36.7)
 }
 
-# Generate one simulated reading for each patient
+
+# --------------------------------------------------
+# 3. GENERATE SIMULATED PATIENT READINGS
+# --------------------------------------------------
+
 def generate_readings():
+
     records = []
+
+    # One common timestamp for this batch
+    current_time = datetime.now()
 
     for patient_id, (base_hr, base_temp) in PATIENTS.items():
 
         heart_rate = int(random.gauss(base_hr, 8))
         temperature = round(random.gauss(base_temp, 0.3), 1)
 
-        # Occasionally generate abnormal readings for demonstration
+        # Occasionally generate abnormal heart rate
         if random.random() < 0.12:
             heart_rate = random.choice([
                 random.randint(45, 59),
                 random.randint(101, 125)
             ])
 
+        # Occasionally generate abnormal temperature
         if random.random() < 0.10:
             temperature = random.choice([
                 round(random.uniform(35.0, 35.9), 1),
@@ -64,25 +83,47 @@ def generate_readings():
             "temperature": temperature,
             "status": "ALERT" if reasons else "NORMAL",
             "alert_reason": ", ".join(reasons) if reasons else "None",
-            "timestamp": datetime.now()
+            "timestamp": current_time
         })
 
     return records
 
 
-# Store readings during the user's dashboard session
+# --------------------------------------------------
+# 4. SESSION STATE
+# --------------------------------------------------
+
 if "records" not in st.session_state:
     st.session_state.records = []
 
-# Refresh the dashboard every 3 seconds
-st_autorefresh(interval=3000, key="refresh")
 
-# Dashboard title
+# --------------------------------------------------
+# 5. AUTOMATIC REFRESH
+# --------------------------------------------------
+
+st_autorefresh(
+    interval=3000,
+    key="refresh"
+)
+
+
+# --------------------------------------------------
+# 6. DASHBOARD TITLE
+# --------------------------------------------------
+
 st.title("🏥 Real-Time Healthcare Monitoring System")
-st.caption("Simulated patient IoT monitoring dashboard")
 
-# Sidebar controls
+st.caption(
+    "Simulated patient IoT monitoring dashboard"
+)
+
+
+# --------------------------------------------------
+# 7. SIDEBAR CONTROLS
+# --------------------------------------------------
+
 with st.sidebar:
+
     st.header("IoT Simulator")
 
     running = st.toggle(
@@ -96,76 +137,150 @@ with st.sidebar:
     )
 
     if st.button("Clear patient history"):
+
         st.session_state.records = []
+
         st.rerun()
 
-# Generate new readings
+
+# --------------------------------------------------
+# 8. GENERATE NEW READINGS
+# --------------------------------------------------
+
 if running:
+
     new_records = generate_readings()
+
     st.session_state.records.extend(new_records)
 
     # Keep only the latest 300 readings
-    st.session_state.records = st.session_state.records[-300:]
+    st.session_state.records = (
+        st.session_state.records[-300:]
+    )
 
-# Convert records into a DataFrame
+
+# --------------------------------------------------
+# 9. CONVERT DATA INTO DATAFRAME
+# --------------------------------------------------
+
 data = pd.DataFrame(st.session_state.records)
 
 if data.empty:
-    st.info("Waiting for patient readings. Turn on the simulator.")
+
+    st.info(
+        "Waiting for patient readings. "
+        "Turn on the simulator."
+    )
+
     st.stop()
 
-# Get the latest reading for each patient
+
+data["timestamp"] = pd.to_datetime(data["timestamp"])
+
+data = data.sort_values("timestamp")
+
+
+# --------------------------------------------------
+# 10. LATEST READING FOR EACH PATIENT
+# --------------------------------------------------
+
 latest = (
     data.sort_values("timestamp")
-    .drop_duplicates("patient_id", keep="last")
+    .drop_duplicates(
+        subset="patient_id",
+        keep="last"
+    )
 )
 
-# Calculate dashboard statistics
-patient_count = latest["patient_id"].nunique()
-normal_count = (latest["status"] == "NORMAL").sum()
-alert_count = (latest["status"] == "ALERT").sum()
 
-# Display summary cards
+# --------------------------------------------------
+# 11. DASHBOARD STATISTICS
+# --------------------------------------------------
+
+patient_count = latest["patient_id"].nunique()
+
+normal_count = (
+    latest["status"] == "NORMAL"
+).sum()
+
+alert_count = (
+    latest["status"] == "ALERT"
+).sum()
+
+
 col1, col2, col3 = st.columns(3)
 
-col1.metric("Patients Monitored", patient_count)
-col2.metric("Normal Patients", normal_count)
-col3.metric("Patients Needing Attention", alert_count)
+col1.metric(
+    "Patients Monitored",
+    patient_count
+)
+
+col2.metric(
+    "Normal Patients",
+    normal_count
+)
+
+col3.metric(
+    "Patients Needing Attention",
+    alert_count
+)
+
 
 st.divider()
 
-# Display heart rate and temperature charts
+
+# --------------------------------------------------
+# 12. HEART RATE AND TEMPERATURE CHARTS
+# --------------------------------------------------
+
 left, right = st.columns(2)
 
+
+# HEART RATE CHART
+
 with left:
+
     st.subheader("❤️ Heart Rate Trend")
 
-    heart_chart = data.pivot_table(
-        index="timestamp",
-        columns="patient_id",
-        values="heart_rate",
-        aggfunc="last"
+    st.line_chart(
+        data,
+        x="timestamp",
+        y="heart_rate",
+        color="patient_id",
+        height=350
     )
 
-    st.line_chart(heart_chart)
-    st.caption("Heart rate in beats per minute (BPM)")
+    st.caption(
+        "Heart rate in beats per minute (BPM)"
+    )
+
+
+# TEMPERATURE CHART
 
 with right:
+
     st.subheader("🌡️ Temperature Trend")
 
-    temp_chart = data.pivot_table(
-        index="timestamp",
-        columns="patient_id",
-        values="temperature",
-        aggfunc="last"
+    st.line_chart(
+        data,
+        x="timestamp",
+        y="temperature",
+        color="patient_id",
+        height=350
     )
 
-    st.line_chart(temp_chart)
-    st.caption("Body temperature in °C")
+    st.caption(
+        "Body temperature in °C"
+    )
+
 
 st.divider()
 
-# Latest patient readings
+
+# --------------------------------------------------
+# 13. LATEST PATIENT STATUS
+# --------------------------------------------------
+
 st.subheader("Latest Patient Status")
 
 display_cols = [
@@ -183,21 +298,38 @@ st.dataframe(
     hide_index=True
 )
 
-# Display abnormal readings
+
+# --------------------------------------------------
+# 14. ABNORMAL PATIENT READINGS
+# --------------------------------------------------
+
 st.subheader("⚠️ Abnormal Patient Readings")
 
-alerts = latest[latest["status"] == "ALERT"]
+alerts = latest[
+    latest["status"] == "ALERT"
+]
 
 if alerts.empty:
-    st.success("No abnormal readings in the latest records.")
+
+    st.success(
+        "No abnormal readings in the latest records."
+    )
+
 else:
+
     st.dataframe(
         alerts[display_cols],
         use_container_width=True,
         hide_index=True
     )
 
+
+# --------------------------------------------------
+# 15. DISCLAIMER
+# --------------------------------------------------
+
 st.caption(
-    "Educational prototype only. Thresholds are simplified examples, "
-    "not medical advice or clinically validated alert limits."
+    "Educational prototype only. Thresholds are "
+    "simplified examples, not medical advice or "
+    "clinically validated alert limits."
 )
