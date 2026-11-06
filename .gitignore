@@ -1,0 +1,13 @@
+# Python generated files
+__pycache__/
+*.pyc
+.venv/
+
+# Spark runtime data and local generated records
+shared/
+checkpoint/
+data/
+*.log
+
+# Local environment files
+.env

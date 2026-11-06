@@ -1,0 +1,30 @@
+# Run Spark processing and the web dashboard as two separate services.
+services:
+  processor:
+    build: .
+    command: ["python", "stream_processor.py"]
+    restart: unless-stopped
+    environment:
+      - SPARK_LOCAL_IP=127.0.0.1
+    volumes:
+      - healthcare_data:/app/shared
+
+  dashboard:
+    build: .
+    command:
+      - streamlit
+      - run
+      - app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.headless=true
+    restart: unless-stopped
+    depends_on:
+      - processor
+    ports:
+      - "8501:8501"
+    volumes:
+      - healthcare_data:/app/shared
+
+volumes:
+  healthcare_data:
