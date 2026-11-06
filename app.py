@@ -1,164 +1,203 @@
-# Streamlit dashboard for the PySpark healthcare monitoring demo.
-# This page reads processed records written by stream_processor.py.
+# Real-Time Healthcare Monitoring Dashboard
+# Standalone Streamlit version for Community Cloud
 
-from pathlib import Path
-import json
+import random
+from datetime import datetime
 import pandas as pd
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 
-# All containers share this folder through Docker Compose.
-DATA_DIR = Path("/app/shared")
-OUTPUT_FILE = DATA_DIR / "processed.jsonl"
-CONTROL_FILE = DATA_DIR / "control.json"
-
+# Page configuration
 st.set_page_config(
-    page_title="Healthcare Monitoring",
+    page_title="Healthcare Monitoring System",
     page_icon="🏥",
     layout="wide"
 )
 
-def read_control():
-    """Read the simulator on/off setting; default to ON for a fresh deployment."""
-    try:
-        return json.loads(CONTROL_FILE.read_text()).get("running", True)
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return True
+# Patient information and normal baseline readings
+PATIENTS = {
+    "P101": (75, 36.8),
+    "P102": (85, 37.0),
+    "P103": (80, 36.9),
+    "P104": (70, 36.5),
+    "P105": (90, 37.2),
+    "P106": (78, 36.8),
+    "P107": (72, 36.9),
+    "P108": (82, 37.1),
+    "P109": (85, 37.1),
+    "P110": (76, 36.7)
+}
 
-def write_control(running: bool):
-    """Tell the background processor whether it should generate simulated readings."""
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    CONTROL_FILE.write_text(json.dumps({"running": running}))
-
-def load_records():
-    """Load complete JSON lines; ignore a partially written final line safely."""
+# Generate one simulated reading for each patient
+def generate_readings():
     records = []
-    if not OUTPUT_FILE.exists():
-        return pd.DataFrame()
 
-    with OUTPUT_FILE.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            try:
-                records.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
+    for patient_id, (base_hr, base_temp) in PATIENTS.items():
 
-    if not records:
-        return pd.DataFrame()
+        heart_rate = int(random.gauss(base_hr, 8))
+        temperature = round(random.gauss(base_temp, 0.3), 1)
 
-    frame = pd.DataFrame(records)
-    frame["timestamp"] = pd.to_datetime(frame["timestamp"], errors="coerce")
-    frame = frame.dropna(subset=["timestamp"])
-    return frame.sort_values("timestamp")
+        # Occasionally generate abnormal readings for demonstration
+        if random.random() < 0.12:
+            heart_rate = random.choice([
+                random.randint(45, 59),
+                random.randint(101, 125)
+            ])
 
-def update_simulator():
-    """Callback used by the sidebar toggle."""
-    write_control(st.session_state.simulator_running)
+        if random.random() < 0.10:
+            temperature = random.choice([
+                round(random.uniform(35.0, 35.9), 1),
+                round(random.uniform(38.1, 39.5), 1)
+            ])
 
-# Automatically refresh the dashboard every 3 seconds.
-st_autorefresh(interval=3000, key="dashboard_refresh")
+        reasons = []
 
+        if heart_rate < 60 or heart_rate > 100:
+            reasons.append("Abnormal heart rate")
+
+        if temperature < 36 or temperature > 38:
+            reasons.append("Abnormal temperature")
+
+        records.append({
+            "patient_id": patient_id,
+            "heart_rate": heart_rate,
+            "temperature": temperature,
+            "status": "ALERT" if reasons else "NORMAL",
+            "alert_reason": ", ".join(reasons) if reasons else "None",
+            "timestamp": datetime.now()
+        })
+
+    return records
+
+
+# Store readings during the user's dashboard session
+if "records" not in st.session_state:
+    st.session_state.records = []
+
+# Refresh the dashboard every 3 seconds
+st_autorefresh(interval=3000, key="refresh")
+
+# Dashboard title
 st.title("🏥 Real-Time Healthcare Monitoring System")
-st.caption("PySpark Structured Streaming • Simulated patient IoT readings")
+st.caption("Simulated patient IoT monitoring dashboard")
 
-# Let the user start or pause the simulated sensor feed.
+# Sidebar controls
 with st.sidebar:
     st.header("IoT Simulator")
-    st.toggle(
+
+    running = st.toggle(
         "Generate patient readings",
-        value=read_control(),
-        key="simulator_running",
-        on_change=update_simulator,
-        help="Turn the simulated patient sensor feed on or off."
-    )
-    st.info(
-        "This is a classroom demonstration using simulated data. "
-        "It is not connected to medical devices."
+        value=True
     )
 
-data = load_records()
+    st.info(
+        "This dashboard uses simulated patient data. "
+        "It is an educational demonstration, not a medical device."
+    )
+
+    if st.button("Clear patient history"):
+        st.session_state.records = []
+        st.rerun()
+
+# Generate new readings
+if running:
+    new_records = generate_readings()
+    st.session_state.records.extend(new_records)
+
+    # Keep only the latest 300 readings
+    st.session_state.records = st.session_state.records[-300:]
+
+# Convert records into a DataFrame
+data = pd.DataFrame(st.session_state.records)
 
 if data.empty:
-    st.warning("Waiting for the first patient readings. The stream processor may still be starting.")
+    st.info("Waiting for patient readings. Turn on the simulator.")
     st.stop()
 
-# Keep only the latest reading for each patient for the summary cards.
+# Get the latest reading for each patient
 latest = (
     data.sort_values("timestamp")
-        .drop_duplicates(subset=["patient_id"], keep="last")
+    .drop_duplicates("patient_id", keep="last")
 )
 
-normal_count = int((latest["status"] == "NORMAL").sum())
-alert_count = int((latest["status"] == "ALERT").sum())
-patient_count = int(latest["patient_id"].nunique())
+# Calculate dashboard statistics
+patient_count = latest["patient_id"].nunique()
+normal_count = (latest["status"] == "NORMAL").sum()
+alert_count = (latest["status"] == "ALERT").sum()
 
-# Display high-level patient statistics.
+# Display summary cards
 col1, col2, col3 = st.columns(3)
-col1.metric("Patients monitored", patient_count)
-col2.metric("Normal patients", normal_count)
-col3.metric("Patients needing attention", alert_count)
+
+col1.metric("Patients Monitored", patient_count)
+col2.metric("Normal Patients", normal_count)
+col3.metric("Patients Needing Attention", alert_count)
 
 st.divider()
 
-# Display recent heart-rate and temperature trends.
+# Display heart rate and temperature charts
 left, right = st.columns(2)
 
 with left:
-    st.subheader("Heart rate trend")
-    heart_chart = data[["timestamp", "patient_id", "heart_rate"]].copy()
-    heart_chart["patient"] = heart_chart["patient_id"]
-    st.line_chart(
-        heart_chart.pivot_table(
-            index="timestamp",
-            columns="patient",
-            values="heart_rate",
-            aggfunc="last"
-        )
+    st.subheader("❤️ Heart Rate Trend")
+
+    heart_chart = data.pivot_table(
+        index="timestamp",
+        columns="patient_id",
+        values="heart_rate",
+        aggfunc="last"
     )
-    st.caption("Illustrative heart-rate readings in beats per minute (BPM).")
+
+    st.line_chart(heart_chart)
+    st.caption("Heart rate in beats per minute (BPM)")
 
 with right:
-    st.subheader("Temperature trend")
-    temp_chart = data[["timestamp", "patient_id", "temperature"]].copy()
-    temp_chart["patient"] = temp_chart["patient_id"]
-    st.line_chart(
-        temp_chart.pivot_table(
-            index="timestamp",
-            columns="patient",
-            values="temperature",
-            aggfunc="last"
-        )
+    st.subheader("🌡️ Temperature Trend")
+
+    temp_chart = data.pivot_table(
+        index="timestamp",
+        columns="patient_id",
+        values="temperature",
+        aggfunc="last"
     )
-    st.caption("Illustrative temperature readings in °C.")
+
+    st.line_chart(temp_chart)
+    st.caption("Body temperature in °C")
 
 st.divider()
 
-# Show the latest known reading for each patient.
-st.subheader("Latest patient status")
+# Latest patient readings
+st.subheader("Latest Patient Status")
+
 display_cols = [
-    "patient_id", "heart_rate", "temperature",
-    "status", "alert_reason", "timestamp"
+    "patient_id",
+    "heart_rate",
+    "temperature",
+    "status",
+    "alert_reason",
+    "timestamp"
 ]
+
 st.dataframe(
-    latest[display_cols].sort_values("patient_id", ascending=True),
+    latest[display_cols].sort_values("patient_id"),
     use_container_width=True,
     hide_index=True
 )
 
-# Show current alerts separately for quick review.
-st.subheader("⚠️ Current abnormal readings")
-alerts = latest[latest["status"] == "ALERT"].copy()
+# Display abnormal readings
+st.subheader("⚠️ Abnormal Patient Readings")
+
+alerts = latest[latest["status"] == "ALERT"]
 
 if alerts.empty:
-    st.success("No abnormal readings in the latest patient records.")
+    st.success("No abnormal readings in the latest records.")
 else:
     st.dataframe(
-        alerts[display_cols].sort_values("timestamp", ascending=False),
+        alerts[display_cols],
         use_container_width=True,
         hide_index=True
     )
 
 st.caption(
     "Educational prototype only. Thresholds are simplified examples, "
-    "not medical advice or a clinically validated alert system."
+    "not medical advice or clinically validated alert limits."
 )
